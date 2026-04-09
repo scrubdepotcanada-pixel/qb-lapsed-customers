@@ -1,6 +1,8 @@
 // pages/index.js
 import { useState, useEffect } from 'react';
 
+const DEFAULT_EXCLUDES = ['cdi', 'vcc', 'reeves'];
+
 export default function Home() {
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -9,10 +11,13 @@ export default function Home() {
   const [error, setError] = useState('');
   const [months, setMonths] = useState(18);
   const [minAmount, setMinAmount] = useState(500);
+  const [excludes, setExcludes] = useState([]);
+  const [newExclude, setNewExclude] = useState('');
+  const [showExcludes, setShowExcludes] = useState(false);
 
   useEffect(() => {
     checkStatus();
-    // Check if we just came back from OAuth
+    loadExcludes();
     if (window.location.search.includes('connected=true')) {
       setConnected(true);
       window.history.replaceState({}, '', '/');
@@ -28,6 +33,56 @@ export default function Home() {
       console.error(e);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadExcludes() {
+    try {
+      const res = await fetch('/api/qb/excludes');
+      const data = await res.json();
+      if (data.excludes && data.excludes.length > 0) {
+        setExcludes(data.excludes);
+      } else {
+        // Set defaults on first load
+        await fetch('/api/qb/excludes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'set', excludes: DEFAULT_EXCLUDES }),
+        });
+        setExcludes(DEFAULT_EXCLUDES);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function addExclude() {
+    if (!newExclude.trim()) return;
+    try {
+      const res = await fetch('/api/qb/excludes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'add', keyword: newExclude }),
+      });
+      const data = await res.json();
+      setExcludes(data.excludes);
+      setNewExclude('');
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function removeExclude(keyword) {
+    try {
+      const res = await fetch('/api/qb/excludes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'remove', keyword }),
+      });
+      const data = await res.json();
+      setExcludes(data.excludes);
+    } catch (e) {
+      console.error(e);
     }
   }
 
@@ -146,6 +201,50 @@ export default function Home() {
                     min={0}
                   />
                 </div>
+              </div>
+
+              {/* Exclude List */}
+              <div style={{ marginTop: '16px' }}>
+                <button
+                  onClick={() => setShowExcludes(!showExcludes)}
+                  style={styles.toggleBtn}
+                >
+                  {showExcludes ? '▾' : '▸'} Exclude List ({excludes.length})
+                </button>
+
+                {showExcludes && (
+                  <div style={styles.excludeSection}>
+                    <p style={styles.excludeHint}>
+                      Customers matching these keywords will be excluded from results
+                    </p>
+                    <div style={styles.excludeTags}>
+                      {excludes.map((kw) => (
+                        <span key={kw} style={styles.tag}>
+                          {kw}
+                          <button
+                            onClick={() => removeExclude(kw)}
+                            style={styles.tagRemove}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                    <div style={styles.addExcludeRow}>
+                      <input
+                        type="text"
+                        value={newExclude}
+                        onChange={(e) => setNewExclude(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && addExclude()}
+                        placeholder="Add keyword to exclude..."
+                        style={{ ...styles.input, flex: 1 }}
+                      />
+                      <button onClick={addExclude} style={styles.addBtn}>
+                        Add
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -309,6 +408,66 @@ const styles = {
     color: '#fff',
     fontSize: '14px',
     boxSizing: 'border-box',
+  },
+  toggleBtn: {
+    background: 'none',
+    border: 'none',
+    color: '#888',
+    cursor: 'pointer',
+    fontSize: '13px',
+    padding: '4px 0',
+    fontWeight: 500,
+  },
+  excludeSection: {
+    marginTop: '10px',
+    padding: '16px',
+    background: '#0f0f1a',
+    borderRadius: '8px',
+    border: '1px solid #333',
+  },
+  excludeHint: {
+    color: '#666',
+    fontSize: '12px',
+    marginBottom: '12px',
+  },
+  excludeTags: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '8px',
+    marginBottom: '12px',
+  },
+  tag: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    background: '#2a2a4a',
+    color: '#ccc',
+    padding: '6px 12px',
+    borderRadius: '20px',
+    fontSize: '13px',
+  },
+  tagRemove: {
+    background: 'none',
+    border: 'none',
+    color: '#ef4444',
+    cursor: 'pointer',
+    fontSize: '16px',
+    padding: 0,
+    lineHeight: 1,
+  },
+  addExcludeRow: {
+    display: 'flex',
+    gap: '8px',
+  },
+  addBtn: {
+    padding: '10px 20px',
+    background: '#333',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: 500,
   },
   actions: { display: 'flex', gap: '12px', marginBottom: '24px', flexWrap: 'wrap' },
   primaryBtn: {
