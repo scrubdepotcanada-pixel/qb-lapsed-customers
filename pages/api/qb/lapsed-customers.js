@@ -1,5 +1,6 @@
 // pages/api/qb/lapsed-customers.js
 import { getValidTokens, qboQueryAll } from '../../../lib/quickbooks';
+import { getExcludesFromReq } from './excludes';
 import ExcelJS from 'exceljs';
 
 export default async function handler(req, res) {
@@ -114,10 +115,21 @@ export default async function handler(req, res) {
     const cutoffDate = new Date();
     cutoffDate.setMonth(cutoffDate.getMonth() - monthsInactive);
 
+    // Get exclude keywords
+    const excludeKeywords = getExcludesFromReq(req);
+
     const lapsedCustomers = Object.values(customerMap)
       .filter((c) => {
         if (!c.lastOrderDate) return false;
-        return c.lastOrderDate < cutoffDate && c.lastOrderAmount >= minLastOrder;
+        if (c.lastOrderDate >= cutoffDate) return false;
+        if (c.lastOrderAmount < minLastOrder) return false;
+        // Check exclude list — if customer name contains any excluded keyword, skip
+        const nameLower = c.name.toLowerCase();
+        const companyLower = (c.company || '').toLowerCase();
+        for (const kw of excludeKeywords) {
+          if (nameLower.includes(kw) || companyLower.includes(kw)) return false;
+        }
+        return true;
       })
       .sort((a, b) => b.totalSpent - a.totalSpent)
       .map((c) => ({
