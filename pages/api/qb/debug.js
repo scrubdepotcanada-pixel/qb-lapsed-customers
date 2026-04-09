@@ -1,8 +1,8 @@
 // pages/api/qb/debug.js
-import { getValidToken, getTokenStore } from '../../../lib/quickbooks';
+import { getValidTokens, getTokensFromReq } from '../../../lib/quickbooks';
 
 export default async function handler(req, res) {
-  const store = getTokenStore();
+  const tokens = getTokensFromReq(req);
   const realmId = process.env.QB_REALM_ID;
   const sandbox = process.env.QB_SANDBOX;
   const baseUrl = sandbox === 'true'
@@ -13,29 +13,27 @@ export default async function handler(req, res) {
     realmId,
     sandbox,
     baseUrl,
-    hasAccessToken: !!store.accessToken,
-    hasRefreshToken: !!store.refreshToken,
-    tokenExpiresAt: store.expiresAt ? new Date(store.expiresAt).toISOString() : null,
-    tokenExpired: store.expiresAt ? Date.now() > store.expiresAt : true,
+    hasAccessToken: !!(tokens && tokens.accessToken),
+    hasRefreshToken: !!(tokens && tokens.refreshToken),
+    tokenExpiresAt: tokens?.expiresAt ? new Date(tokens.expiresAt).toISOString() : null,
+    tokenExpired: tokens?.expiresAt ? Date.now() > tokens.expiresAt : true,
     redirectUri: process.env.QB_REDIRECT_URI,
     clientIdPrefix: process.env.QB_CLIENT_ID ? process.env.QB_CLIENT_ID.substring(0, 10) + '...' : 'NOT SET',
   };
 
-  // Try a simple API call
-  if (store.accessToken) {
+  if (tokens && tokens.accessToken) {
     try {
-      const token = await getValidToken();
+      const validTokens = await getValidTokens(req, res);
       const url = `${baseUrl}/${realmId}/companyinfo/${realmId}?minorversion=65`;
       const apiRes = await fetch(url, {
         headers: {
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${validTokens.accessToken}`,
           Accept: 'application/json',
         },
       });
       const body = await apiRes.text();
       debug.apiTest = {
         status: apiRes.status,
-        statusText: apiRes.statusText,
         url,
         response: body.substring(0, 500),
       };

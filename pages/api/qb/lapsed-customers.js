@@ -1,15 +1,15 @@
 // pages/api/qb/lapsed-customers.js
-import { qboQueryAll, getValidToken } from '../../../lib/quickbooks';
+import { getValidTokens, qboQueryAll } from '../../../lib/quickbooks';
 import ExcelJS from 'exceljs';
 
 export default async function handler(req, res) {
-  // Optional query params to override defaults
   const monthsInactive = parseInt(req.query.months) || 18;
   const minLastOrder = parseFloat(req.query.min_amount) || 500;
-  const format = req.query.format || 'xlsx'; // xlsx or json
+  const format = req.query.format || 'xlsx';
 
+  let tokens;
   try {
-    await getValidToken();
+    tokens = await getValidTokens(req, res);
   } catch (err) {
     if (err.message === 'NO_TOKEN') {
       return res.status(401).json({
@@ -20,12 +20,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    // 1) Fetch all customers
-    const customers = await qboQueryAll(
-      "SELECT * FROM Customer WHERE Active = true"
-    );
+    const customers = await qboQueryAll("SELECT * FROM Customer WHERE Active = true", tokens, req, res);
 
-    // Build a customer lookup map
     const customerMap = {};
     for (const c of customers) {
       customerMap[c.Id] = {
@@ -40,17 +36,12 @@ export default async function handler(req, res) {
       };
     }
 
-    // 2) Fetch all invoices (paid or not — we want purchase history)
-    const invoices = await qboQueryAll(
-      "SELECT * FROM Invoice"
-    );
+    const invoices = await qboQueryAll("SELECT * FROM Invoice", tokens, req, res);
 
-    // 3) Aggregate by customer
     for (const inv of invoices) {
       const custId = inv.CustomerRef?.value;
       if (!custId) continue;
 
-      // If customer wasn't in our active list, add them
       if (!customerMap[custId]) {
         customerMap[custId] = {
           id: custId,
@@ -76,15 +67,13 @@ export default async function handler(req, res) {
         c.lastOrderAmount = amount;
       }
 
-      // Also grab email from invoice if we don't have one
       if (!c.email && inv.BillEmail?.Address) {
         c.email = inv.BillEmail.Address;
       }
     }
 
-    // 4) Also fetch SalesReceipts (cash sales, not invoiced)
     try {
-      const salesReceipts = await qboQueryAll("SELECT * FROM SalesReceipt");
+      const salesReceipts = await qboQueryAll("SELECT * FROM SalesReceipt", tokens, req, res);
       for (const sr of salesReceipts) {
         const custId = sr.CustomerRef?.value;
         if (!custId) continue;
@@ -119,11 +108,9 @@ export default async function handler(req, res) {
         }
       }
     } catch (e) {
-      // SalesReceipts may not exist — that's fine
       console.log('SalesReceipts query skipped:', e.message);
     }
 
-    // 5) Filter: inactive for X months AND last order >= $min
     const cutoffDate = new Date();
     cutoffDate.setMonth(cutoffDate.getMonth() - monthsInactive);
 
@@ -146,7 +133,6 @@ export default async function handler(req, res) {
         invoiceCount: c.invoiceCount,
       }));
 
-    // 6) Return JSON or Excel
     if (format === 'json') {
       return res.json({
         filters: { monthsInactive, minLastOrder },
@@ -157,17 +143,13 @@ export default async function handler(req, res) {
       });
     }
 
-    // Generate Excel
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'TWG Lapsed Customer Tool';
     workbook.created = new Date();
 
     const sheet = workbook.addWorksheet('Lapsed Customers');
-
-    // Header styling
     const headerFill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1a1a2e' } };
     const headerFont = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11, name: 'Arial' };
-    const currencyFormat = '$#,##0.00';
 
     sheet.columns = [
       { header: 'Customer Name', key: 'name', width: 30 },
@@ -180,7 +162,6 @@ export default async function handler(req, res) {
       { header: 'Invoices', key: 'invoiceCount', width: 10 },
     ];
 
-    // Style headers
     sheet.getRow(1).eachCell((cell) => {
       cell.fill = headerFill;
       cell.font = headerFont;
@@ -188,36 +169,24 @@ export default async function handler(req, res) {
     });
     sheet.getRow(1).height = 24;
 
-    // Add data
     for (const c of lapsedCustomers) {
       const row = sheet.addRow(c);
-      row.getCell('totalSpent').numFmt = currencyFormat;
-      row.getCell('lastOrderAmount').numFmt = currencyFormat;
+      row.getCell('totalSpent').numFmt = '$#,##0.00';
+      row.getCell('lastOrderAmount').numFmt = '$#,##0.00';
       row.font = { name: 'Arial', size: 10 };
     }
 
-    // Auto-filter
-    sheet.autoFilter = {
-      from: 'A1',
-      to: `H${lapsedCustomers.length + 1}`,
-    };
-
-    // Freeze header row
+    sheet.autoFilter = { from: 'A1', to: `H${lapsedCustomers.length + 1}` };
     sheet.views = [{ state: 'frozen', ySplit: 1 }];
 
-    // Summary sheet
     const summarySheet = workbook.addWorksheet('Summary');
     summarySheet.columns = [
       { header: 'Metric', key: 'metric', width: 30 },
       { header: 'Value', key: 'value', width: 20 },
     ];
-    summarySheet.getRow(1).eachCell((cell) => {
-      cell.fill = headerFill;
-      cell.font = headerFont;
-    });
+    summarySheet.getRow(1).eachCell((cell) => { cell.fill = headerFill; cell.font = headerFont; });
 
     const totalLapsedRevenue = lapsedCustomers.reduce((s, c) => s + c.totalSpent, 0);
-
     summarySheet.addRow({ metric: 'Report Generated', value: new Date().toISOString().split('T')[0] });
     summarySheet.addRow({ metric: 'Inactive Period (months)', value: monthsInactive });
     summarySheet.addRow({ metric: 'Min Last Order Amount', value: `$${minLastOrder}` });
@@ -226,9 +195,7 @@ export default async function handler(req, res) {
     summarySheet.addRow({ metric: 'Lapsed Customers Found', value: lapsedCustomers.length });
     summarySheet.addRow({ metric: 'Total Lapsed Revenue', value: `$${totalLapsedRevenue.toLocaleString('en-CA', { minimumFractionDigits: 2 })}` });
 
-    // Write to buffer and send
     const buffer = await workbook.xlsx.writeBuffer();
-
     const filename = `lapsed-customers-${new Date().toISOString().split('T')[0]}.xlsx`;
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);

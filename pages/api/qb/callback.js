@@ -1,16 +1,16 @@
 // pages/api/qb/callback.js
-import { exchangeCodeForTokens } from '../../../lib/quickbooks';
+import { exchangeCodeForTokens, setTokenCookie } from '../../../lib/quickbooks';
 
 export default async function handler(req, res) {
-  const { code, realmId } = req.query;
+  const { code } = req.query;
 
   if (!code) {
     return res.status(400).json({ error: 'Missing authorization code' });
   }
 
   try {
-    await exchangeCodeForTokens(code);
-    // Redirect back to the app dashboard
+    const tokens = await exchangeCodeForTokens(code);
+    setTokenCookie(res, tokens);
     res.redirect('/?connected=true');
   } catch (err) {
     console.error('OAuth callback error:', err);

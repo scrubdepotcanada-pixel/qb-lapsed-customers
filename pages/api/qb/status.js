@@ -1,11 +1,11 @@
 // pages/api/qb/status.js
-import { getTokenStore } from '../../../lib/quickbooks';
+import { getTokensFromReq } from '../../../lib/quickbooks';
 
 export default function handler(req, res) {
-  const store = getTokenStore();
+  const tokens = getTokensFromReq(req);
   res.json({
-    connected: !!store.accessToken,
-    expiresAt: store.expiresAt,
-    hasRefreshToken: !!store.refreshToken,
+    connected: !!(tokens && tokens.accessToken),
+    expiresAt: tokens?.expiresAt || null,
+    hasRefreshToken: !!(tokens && tokens.refreshToken),
   });
 }
